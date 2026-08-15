@@ -1,74 +1,105 @@
 # Background File Copy Progress Monitor
 
-## Overview
+A Bash script that copies a file to a destination directory in the **background** while periodically estimating and displaying the progress of the copy operation.
 
-This repository contains a Bash script that copies a source file into a destination directory **in the background** and periodically displays an estimate of the percentage of the copy operation that has been completed.
-
-The script is based on the Operating Systems course exercise that combines:
-
-- command-line arguments
-- parameter validation
-- regular-file and directory tests
-- command substitution
-- pipelines
-- `ls`
-- `cut`
-- `df`
-- `tail`
-- `tr`
-- background execution with `&`
-- arithmetic with `let`
-- `while` loops
-- `sleep`
-
-The main idea is to estimate copy progress by checking how much the **used space of the destination file system increases** while the copy is running.
+The script demonstrates how Bash can combine process management, command-line arguments, file-system inspection, pipelines, arithmetic, and loops to monitor an operation while it is running.
 
 ---
 
-## 1. Problem
+## Table of Contents
 
-The script receives exactly two command-line arguments:
+* [Overview](#overview)
+* [What the Script Does](#what-the-script-does)
+* [Script](#script)
+* [Running the Script](#running-the-script)
+* [Command-Line Arguments](#command-line-arguments)
+* [How Progress Is Calculated](#how-progress-is-calculated)
+* [Complete Execution Flow](#complete-execution-flow)
+* [Line-by-Line Explanation](#line-by-line-explanation)
+* [Important Variables](#important-variables)
+* [Important Commands](#important-commands)
+* [Important Bash Syntax](#important-bash-syntax)
+* [Example Execution](#example-execution)
+* [Understanding `df`](#understanding-df)
+* [Understanding the Pipeline](#understanding-the-pipeline)
+* [Why the Copy Runs in the Background](#why-the-copy-runs-in-the-background)
+* [Limitations of the Progress Calculation](#limitations-of-the-progress-calculation)
+* [Summary](#summary)
+
+---
+
+# Overview
+
+Normally, running:
+
+```bash
+cp source_file destination_directory
+```
+
+causes the shell to wait until the copy operation finishes.
+
+This script instead starts the copy in the **background**:
+
+```bash
+cp "$source" "$destination" &
+```
+
+The script can therefore continue executing while `cp` is still running.
+
+During the copy, the script checks how much disk space is being used on the file system containing the destination.
+
+By comparing:
+
+```text
+used space before the copy
+```
+
+with:
+
+```text
+used space during the copy
+```
+
+the script estimates how much data has already been transferred.
+
+It then converts this amount into a percentage.
+
+---
+
+# What the Script Does
+
+The program expects two command-line arguments:
 
 ```bash
 ./copy_progress.sh SOURCE_FILE DESTINATION_DIRECTORY
 ```
 
-Example:
+For example:
 
 ```bash
 ./copy_progress.sh /data/source.iso /data/backup
 ```
 
-In this execution:
+The script performs the following operations:
 
-```text
-$0 = ./copy_progress.sh
-$1 = /data/source.iso
-$2 = /data/backup
-```
-
-So:
-
-- `$1` is the source file.
-- `$2` is the destination directory.
-- `$#` is the number of command-line arguments.
-
-The script must:
-
-1. Check that exactly two arguments were supplied.
-2. Check that the source is a valid regular file.
-3. Check that the destination is a valid directory.
-4. Determine the size of the source file.
-5. Determine how much space is already used on the destination file system.
-6. Start the copy operation in the background.
-7. Check the destination file system every one second.
-8. Determine how much additional space has been used.
-9. Convert that amount into a copy percentage.
-10. Continue until the transferred amount reaches the source-file size.
+1. Verifies that exactly two arguments were supplied.
+2. Verifies that the source exists and is a regular file.
+3. Verifies that the destination exists and is a directory.
+4. Stores the two arguments in descriptive variables.
+5. Determines the size of the source file.
+6. Converts the source size to approximately 1 KB blocks.
+7. Measures the amount of disk space already used on the destination file system.
+8. Starts the file copy in the background.
+9. Repeatedly measures the destination file-system usage.
+10. Estimates how much data has been transferred.
+11. Calculates a progress percentage.
+12. Prints the progress.
+13. Waits one second.
+14. Repeats until the estimated transferred amount reaches the source-file size.
 
 ---
 
-## 2. Complete Script
+# Script
 
 ```bash
 #!/bin/bash
@@ -122,53 +153,326 @@ done
 
 ---
 
-# 3. Line-by-Line Explanation
+# Running the Script
 
-## `#!/bin/bash`
+First, make the script executable:
+
+```bash
+chmod +x copy_progress.sh
+```
+
+Then execute it:
+
+```bash
+./copy_progress.sh SOURCE_FILE DESTINATION_DIRECTORY
+```
+
+Example:
+
+```bash
+./copy_progress.sh /data/source.iso /data/backup
+```
+
+Possible output:
+
+```text
+Progress: 10%
+Progress: 24%
+Progress: 39%
+Progress: 53%
+Progress: 71%
+Progress: 86%
+Progress: 100%
+```
+
+The exact values depend on factors such as:
+
+* file size
+* disk speed
+* file-system behavior
+* system load
+* how much data is written during each one-second interval
+
+---
+
+# Command-Line Arguments
+
+Consider:
+
+```bash
+./copy_progress.sh /data/source.iso /data/backup
+```
+
+Bash assigns:
+
+```text
+$0 = ./copy_progress.sh
+$1 = /data/source.iso
+$2 = /data/backup
+```
+
+The special variable:
+
+```bash
+$#
+```
+
+contains the number of command-line arguments.
+
+In this example:
+
+```text
+$# = 2
+```
+
+The variables therefore have these meanings:
+
+| Variable | Meaning                         |
+| -------- | ------------------------------- |
+| `$0`     | Name used to execute the script |
+| `$1`     | Source-file path                |
+| `$2`     | Destination-directory path      |
+| `$#`     | Number of supplied arguments    |
+
+---
+
+# How Progress Is Calculated
+
+The script does not ask `cp` directly how many bytes it has copied.
+
+Instead, it estimates progress from the increase in used disk space.
+
+Suppose the destination file system initially uses:
+
+```text
+5,000,000 KB
+```
+
+The script stores:
+
+```text
+startUsed = 5,000,000
+```
+
+Later, while the copy is running, suppose the file system uses:
+
+```text
+5,025,000 KB
+```
+
+Then:
+
+```text
+currentUsed = 5,025,000
+```
+
+The transferred amount is estimated as:
+
+```text
+transferred = currentUsed - startUsed
+```
+
+Therefore:
+
+```text
+transferred = 5,025,000 - 5,000,000
+            = 25,000 KB
+```
+
+If the source file has a size of:
+
+```text
+100,000 KB
+```
+
+the percentage becomes:
+
+```text
+percentage = transferred × 100 / size
+```
+
+Therefore:
+
+```text
+percentage = 25,000 × 100 / 100,000
+           = 25
+```
+
+The displayed progress is:
+
+```text
+Progress: 25%
+```
+
+The general formula is:
+
+```text
+                  currentUsed - startUsed
+Progress (%) = ----------------------------- × 100
+                         size
+```
+
+---
+
+# Complete Execution Flow
+
+```text
+START
+  |
+  v
+Check number of parameters
+  |
+  +---- Incorrect ----> Print usage
+  |                         |
+  |                         v
+  |                      exit 1
+  |
+ Correct
+  |
+  v
+Check whether $1 is a regular file
+  |
+  +---- No -----------> Print error
+  |                         |
+  |                         v
+  |                      exit 1
+  |
+ Yes
+  |
+  v
+Check whether $2 is a directory
+  |
+  +---- No -----------> Print error
+  |                         |
+  |                         v
+  |                      exit 1
+  |
+ Yes
+  |
+  v
+source=$1
+destination=$2
+  |
+  v
+Determine source-file size
+  |
+  v
+Convert source size to 1 KB blocks
+  |
+  v
+Measure destination file-system used space
+  |
+  v
+Store it in startUsed
+  |
+  v
+Start cp in background
+  |
+  v
+transferred=0
+percentage=0
+  |
+  v
++------------------------------------+
+| Is transferred smaller than size?  |
++------------------------------------+
+         |
+        Yes
+         |
+         v
+Measure current used space
+         |
+         v
+currentUsed
+         |
+         v
+transferred =
+currentUsed - startUsed
+         |
+         v
+percentage =
+transferred × 100 / size
+         |
+         v
+Print percentage
+         |
+         v
+sleep 1
+         |
+         +-------------> Repeat
+         |
+        No
+         |
+         v
+        END
+```
+
+---
+
+# Line-by-Line Explanation
+
+## 1. Select the Bash Interpreter
 
 ```bash
 #!/bin/bash
 ```
 
-This is the **shebang**.
+This line is called the **shebang**.
 
-It tells the operating system to execute the script using the Bash interpreter located at:
+It tells the operating system that the script should be interpreted using:
 
 ```text
 /bin/bash
 ```
 
+Without it, the operating system may not know which interpreter should execute the file.
+
 ---
 
-## Check the Number of Parameters
+# 2. Check the Number of Arguments
 
 ```bash
 if [ $# -ne 2 ]; then
 ```
 
-This starts an `if` statement.
+This begins an `if` statement.
+
+The condition is:
+
+```bash
+[ $# -ne 2 ]
+```
 
 ### `$#`
 
-`$#` contains the number of command-line arguments passed to the script.
+`$#` stores the number of arguments passed to the script.
 
 Example:
 
 ```bash
-./copy_progress.sh file.txt /data/backup
+./copy_progress.sh file.iso /backup
 ```
 
-has two arguments:
+contains two arguments:
 
 ```text
-$1 = file.txt
-$2 = /data/backup
+$1 = file.iso
+$2 = /backup
+```
+
+Therefore:
+
+```text
 $# = 2
 ```
 
 ### `-ne`
 
-`-ne` means **numerically not equal**.
+`-ne` means:
+
+```text
+numerically not equal
+```
 
 Therefore:
 
@@ -178,19 +482,19 @@ Therefore:
 
 means:
 
-> Is the number of supplied parameters different from 2?
+> Is the number of arguments different from 2?
 
-If yes, the condition is true.
+If the answer is yes, the commands inside the `if` block are executed.
 
 ---
 
-## Display Correct Usage
+# 3. Print the Usage Message
 
 ```bash
 echo "Usage $0 <source> <destination>"
 ```
 
-`echo` prints text to the terminal.
+`echo` prints text on standard output.
 
 `$0` contains the name used to execute the script.
 
@@ -200,38 +504,59 @@ For example:
 $0 = ./copy_progress.sh
 ```
 
-So the output may be:
+The output becomes:
 
 ```text
 Usage ./copy_progress.sh <source> <destination>
 ```
 
+This tells the user how the program should be executed.
+
 ---
 
-## Terminate on Error
+# 4. Terminate After Invalid Arguments
 
 ```bash
 exit 1
 ```
 
-`exit` terminates the script.
+`exit` immediately terminates the script.
 
-Conventionally:
+By convention:
 
-- `exit 0` means successful completion.
-- a non-zero value such as `exit 1` indicates an error.
+```text
+exit 0
+```
+
+means successful completion.
+
+A non-zero exit status such as:
+
+```text
+exit 1
+```
+
+indicates an error.
 
 ---
 
-## End the First `if`
+# 5. Close the `if`
 
 ```bash
 fi
 ```
 
-`fi` closes the Bash `if` statement.
+Bash uses:
 
-So:
+```bash
+if
+...
+fi
+```
+
+to define an `if` block.
+
+So the complete section:
 
 ```bash
 if [ $# -ne 2 ]; then
@@ -242,17 +567,17 @@ fi
 
 means:
 
-> If the user did not provide exactly two arguments, print the correct usage and stop the script.
+> If exactly two arguments were not supplied, print an error message and stop.
 
 ---
 
-# 4. Check the Source File
+# 6. Validate the Source File
 
 ```bash
 if [ ! -f $1 ]; then
 ```
 
-This checks whether the first argument is a valid regular file.
+This verifies that the first argument refers to a regular file.
 
 ### `-f`
 
@@ -262,11 +587,25 @@ The test:
 -f path
 ```
 
-is true when the path exists and refers to a **regular file**.
+is true if `path` exists and represents a regular file.
+
+For example:
+
+```bash
+[ -f document.txt ]
+```
+
+is true if `document.txt` exists as a normal file.
 
 ### `!`
 
-`!` means logical NOT.
+The symbol:
+
+```bash
+!
+```
+
+means logical NOT.
 
 Therefore:
 
@@ -278,21 +617,36 @@ means:
 
 > `$1` is not a valid regular file.
 
-If the test is true, the script prints:
+---
+
+# 7. Source Error Message
 
 ```bash
 echo "Source is not a valid file."
 ```
 
-and terminates:
+If the source is invalid, this message is printed.
+
+Then:
 
 ```bash
 exit 1
 ```
 
+terminates the script.
+
+The complete block is:
+
+```bash
+if [ ! -f $1 ]; then
+    echo "Source is not a valid file."
+    exit 1
+fi
+```
+
 ---
 
-# 5. Check the Destination Directory
+# 8. Validate the Destination Directory
 
 ```bash
 if [ ! -d $2 ]; then
@@ -306,7 +660,7 @@ The test:
 -d path
 ```
 
-is true when the path exists and is a directory.
+checks whether `path` exists and represents a directory.
 
 Therefore:
 
@@ -316,68 +670,105 @@ Therefore:
 
 means:
 
-> `$2` is not a valid directory.
+> `$2` does not refer to a valid directory.
 
-If so, the script prints:
+If this is true:
 
 ```bash
 echo "Destination is not a valid directory."
-```
-
-and exits with:
-
-```bash
 exit 1
 ```
 
+prints an error and terminates the script.
+
 ---
 
-# 6. Store the Arguments in Variables
+# 9. Save the Source Argument
 
 ```bash
 source=$1
-destination=$2
 ```
 
-These assignments give meaningful names to the two arguments.
+This creates a variable named:
 
-If:
+```text
+source
+```
+
+and stores `$1` inside it.
+
+For example:
 
 ```text
 $1 = /data/source.iso
-$2 = /data/backup
 ```
 
-then:
+results in:
 
 ```text
 source = /data/source.iso
-destination = /data/backup
 ```
 
-The script can now use:
+Later, the value is accessed with:
 
 ```bash
 $source
-$destination
 ```
-
-instead of directly using `$1` and `$2`.
 
 ---
 
-# 7. Determine the Source File Size
+# 10. Save the Destination Argument
+
+```bash
+destination=$2
+```
+
+This stores the second command-line argument in:
+
+```text
+destination
+```
+
+For example:
+
+```text
+$2 = /data/backup
+```
+
+becomes:
+
+```text
+destination = /data/backup
+```
+
+This improves readability because:
+
+```bash
+$destination
+```
+
+is more descriptive than:
+
+```bash
+$2
+```
+
+---
+
+# 11. Get the Source File Size
 
 ```bash
 size=$(ls -l $source | cut -d " " -f 5)
 ```
 
-This line combines:
+This line contains four important concepts:
 
-- `ls -l`
-- a pipe `|`
-- `cut`
-- command substitution `$()`
+```text
+ls -l
+pipe |
+cut
+command substitution $()
+```
 
 ---
 
@@ -385,15 +776,21 @@ This line combines:
 
 `ls` lists file information.
 
-The `-l` option selects the **long listing format**.
+The `-l` option selects the long listing format.
 
-A conceptual output is:
+Example:
 
-```text
--rw-r--r-- 1 user user 10485760 Aug 15 source.iso
+```bash
+ls -l file.iso
 ```
 
-The course solution uses the fifth field as the file size.
+may produce information containing:
+
+```text
+-rw-r--r-- 1 user user 10485760 Aug 15 file.iso
+```
+
+Among these fields is the file size.
 
 ---
 
@@ -405,7 +802,7 @@ The pipe:
 |
 ```
 
-passes the output of the command on its left to the command on its right.
+takes the standard output of the command on its left and sends it as standard input to the command on its right.
 
 Therefore:
 
@@ -415,28 +812,42 @@ ls -l $source | cut ...
 
 means:
 
-1. Run `ls -l $source`.
-2. Send its output to `cut`.
+```text
+ls produces output
+        |
+        v
+cut receives that output
+```
 
 ---
 
-## `cut -d " " -f 5`
+## `cut -d " "`
 
-`cut` extracts selected fields.
+`cut` extracts fields from text.
 
-### `-d " "`
+The option:
 
-This says that a space is the field delimiter.
+```bash
+-d " "
+```
 
-### `-f 5`
-
-This says to extract field number 5.
-
-The result is stored in `size`.
+defines a space as the field delimiter.
 
 ---
 
-## Command Substitution `$()`
+## `-f 5`
+
+```bash
+-f 5
+```
+
+asks `cut` to select field number 5.
+
+The selected value is treated as the source-file size.
+
+---
+
+## `$()`
 
 The syntax:
 
@@ -444,31 +855,41 @@ The syntax:
 $(command)
 ```
 
-means:
+is called **command substitution**.
 
-1. execute the command,
-2. capture its output,
-3. substitute that output at this location.
+It means:
 
-So:
+1. execute `command`,
+2. collect its output,
+3. use that output as a value.
+
+Therefore:
 
 ```bash
 size=$(...)
 ```
 
-stores the output in the variable `size`.
+stores the output inside `size`.
 
 ---
 
-# 8. Convert Bytes to 1K Blocks
+# 12. Convert the File Size
 
 ```bash
 let "size=size/1024"
 ```
 
-The size obtained from `ls -l` is in bytes.
+The size returned by `ls -l` is expressed in bytes.
 
-The later `df` values are expressed in 1K blocks, so the script divides by 1024:
+The `df` values used later are expressed in 1K blocks.
+
+The script therefore divides the file size by:
+
+```text
+1024
+```
+
+because:
 
 ```text
 1024 bytes = 1 KiB
@@ -477,18 +898,28 @@ The later `df` values are expressed in 1K blocks, so the script divides by 1024:
 Example:
 
 ```text
+10485760 bytes
+```
+
+becomes:
+
+```text
 10485760 / 1024 = 10240
 ```
 
-So the source size becomes approximately:
+So:
 
 ```text
-10240 1K blocks
+size = 10240
 ```
 
-### `let`
+in approximately 1 KB units.
 
-`let` performs integer arithmetic in Bash.
+---
+
+## `let`
+
+`let` performs integer arithmetic.
 
 Example:
 
@@ -496,15 +927,19 @@ Example:
 let "x=x+1"
 ```
 
-increments `x`.
+means:
 
-Here:
+```text
+x = x + 1
+```
+
+Therefore:
 
 ```bash
 let "size=size/1024"
 ```
 
-performs:
+means:
 
 ```text
 size = size / 1024
@@ -512,7 +947,7 @@ size = size / 1024
 
 ---
 
-# 9. Record Initial Used Space
+# 13. Measure Initial Used Disk Space
 
 ```bash
 startUsed=$(df $destination | \
@@ -521,9 +956,9 @@ startUsed=$(df $destination | \
             cut -d " " -f 3)
 ```
 
-This obtains how much disk space is already used on the file system containing the destination.
+This pipeline obtains the amount of space currently used on the file system containing the destination directory.
 
-The pipeline is:
+The commands execute in this order:
 
 ```text
 df
@@ -540,9 +975,13 @@ cut
 
 ---
 
-## `df $destination`
+# 14. `df $destination`
 
-`df` shows disk-space information for the **file system containing the specified path**.
+```bash
+df $destination
+```
+
+`df` reports disk-space information for the file system containing the specified path.
 
 Example:
 
@@ -550,83 +989,76 @@ Example:
 df /data/backup
 ```
 
-Possible output:
+may display:
 
 ```text
 Filesystem     1K-blocks    Used    Available Use% Mounted on
 /dev/sda7       41141492   5881472   33174616  16% /data
 ```
 
-Important fields:
+The fields mean approximately:
+
+| Field        | Meaning               |
+| ------------ | --------------------- |
+| `Filesystem` | Device or file system |
+| `1K-blocks`  | Total capacity        |
+| `Used`       | Occupied space        |
+| `Available`  | Free space            |
+| `Use%`       | Percentage occupied   |
+| `Mounted on` | Mount point           |
+
+The script needs:
 
 ```text
-1K-blocks = total file-system space
-Used      = occupied file-system space
-Available = free file-system space
+Used
 ```
 
-The script uses the `Used` field.
-
-Important: `df /data/backup` does **not** give the size of `/data/backup` itself. It gives information about the whole file system containing that directory.
+because it wants to detect how much the occupied space increases during the copy.
 
 ---
 
-## `tail -n 1`
+# 15. `tail -n 1`
 
-`df` prints a header and a data line.
+The `df` command also prints a header.
 
-`tail -n 1` keeps only the final line.
-
-Input:
+For example:
 
 ```text
-Filesystem     1K-blocks    Used    Available Use% Mounted on
-/dev/sda7       41141492   5881472   33174616  16% /data
+Filesystem     1K-blocks Used Available Use% Mounted on
+/dev/sda7      ...
 ```
 
-Output:
+The command:
+
+```bash
+tail -n 1
+```
+
+returns only the final line.
+
+So:
 
 ```text
-/dev/sda7       41141492   5881472   33174616  16% /data
+Filesystem ...
+/dev/sda7 ...
 ```
+
+becomes:
+
+```text
+/dev/sda7 ...
+```
+
+The header is removed.
 
 ---
 
-## Backslash `\`
+# 16. `tr -s " "`
 
-The backslash at the end of a line:
-
-```bash
-\
-```
-
-means that the command continues on the following line.
-
-Therefore:
-
-```bash
-df $destination | \
-tail -n 1 | \
-tr -s " " | \
-cut -d " " -f 3
-```
-
-is equivalent to:
-
-```bash
-df $destination | tail -n 1 | tr -s " " | cut -d " " -f 3
-```
-
----
-
-## `tr -s " "`
-
-`df` may use several spaces to align columns.
-
-Example:
+Commands such as `df` often use several spaces between columns:
 
 ```text
-/dev/sda7      41141492     5881472     33174616    16% /data
+/dev/sda7       41141492    5881472    33174616   16%   /data
 ```
 
 The command:
@@ -635,32 +1067,36 @@ The command:
 tr -s " "
 ```
 
-"squeezes" repeated spaces into one space.
+uses the `-s` option to **squeeze repeated spaces**.
 
-The result becomes:
+Several consecutive spaces become one:
 
 ```text
 /dev/sda7 41141492 5881472 33174616 16% /data
 ```
 
-This makes field extraction easier.
+This makes the fields easier to extract.
 
 ---
 
-## `cut -d " " -f 3`
+# 17. `cut -d " " -f 3`
 
-After spaces are normalized, the fields are:
+After the spaces have been normalized, the line can be viewed as:
 
 ```text
-Field 1 = /dev/sda7
-Field 2 = 41141492
-Field 3 = 5881472
-Field 4 = 33174616
-Field 5 = 16%
-Field 6 = /data
+Field 1 → /dev/sda7
+Field 2 → 41141492
+Field 3 → 5881472
+Field 4 → 33174616
+Field 5 → 16%
+Field 6 → /data
 ```
 
-Field 3 is the `Used` value.
+Field 3 is:
+
+```text
+Used
+```
 
 Therefore:
 
@@ -668,7 +1104,7 @@ Therefore:
 cut -d " " -f 3
 ```
 
-extracts the used file-system space.
+extracts the used-space value.
 
 That value is stored in:
 
@@ -676,19 +1112,62 @@ That value is stored in:
 startUsed
 ```
 
-So `startUsed` means:
+---
 
-> used destination file-system space before the copy starts.
+# 18. Meaning of `startUsed`
+
+`startUsed` represents:
+
+> How much disk space was already occupied on the destination file system before this copy began.
+
+For example:
+
+```text
+startUsed = 5881472
+```
+
+This value provides the starting point for the progress calculation.
 
 ---
 
-# 10. Start the Copy in the Background
+# 19. The Backslash `\`
+
+The pipeline is written over several lines:
+
+```bash
+df $destination | \
+tail -n 1 | \
+tr -s " " | \
+cut -d " " -f 3
+```
+
+The backslash:
+
+```bash
+\
+```
+
+means:
+
+> Continue this command on the next physical line.
+
+Therefore the same command could be written as:
+
+```bash
+df $destination | tail -n 1 | tr -s " " | cut -d " " -f 3
+```
+
+The multi-line form is simply easier to read.
+
+---
+
+# 20. Start the Copy
 
 ```bash
 cp $source $destination &
 ```
 
-`cp` copies a source file to a destination.
+`cp` copies a file.
 
 General form:
 
@@ -696,23 +1175,47 @@ General form:
 cp SOURCE DESTINATION
 ```
 
-Example:
+For example:
 
 ```bash
 cp /data/source.iso /data/backup
 ```
 
-The important part is:
+copies:
+
+```text
+/data/source.iso
+```
+
+into:
+
+```text
+/data/backup
+```
+
+---
+
+# 21. Background Operator `&`
+
+The final character:
 
 ```bash
 &
 ```
 
-`&` starts the command as a **background job**.
+is extremely important.
 
-Without `&`, the script would wait for `cp` to finish before continuing.
+Without it:
 
-That would make progress monitoring useless.
+```bash
+cp $source $destination
+```
+
+the shell waits until `cp` finishes.
+
+Only after the entire file has been copied would the script continue.
+
+That would make monitoring impossible.
 
 With:
 
@@ -720,55 +1223,90 @@ With:
 cp $source $destination &
 ```
 
-the behavior is conceptually:
+the copy runs in the background.
+
+The shell immediately continues to the following commands.
+
+Conceptually:
 
 ```text
-              +--> cp keeps copying
-              |
-script -------+
-              |
-              +--> script continues monitoring
+             +------------------------+
+             | cp copies the file     |
+             | in the background      |
+             +------------------------+
+                       |
+                       | simultaneously
+                       |
+             +------------------------+
+             | script checks progress |
+             +------------------------+
 ```
 
 ---
 
-# 11. Initialize Monitoring Variables
+# 22. Initialize `transferred`
 
 ```bash
 transferred=0
-percentage=0
 ```
 
-At the beginning:
+Before monitoring begins:
 
 ```text
 transferred = 0
-percentage  = 0
 ```
 
-`transferred` represents the estimated amount copied.
-
-`percentage` represents the estimated copy percentage.
+This variable will later store the estimated number of 1 KB blocks transferred.
 
 ---
 
-# 12. Start the `while` Loop
+# 23. Initialize `percentage`
+
+```bash
+percentage=0
+```
+
+Initially:
+
+```text
+percentage = 0
+```
+
+which corresponds to:
+
+```text
+0%
+```
+
+---
+
+# 24. Begin the Monitoring Loop
 
 ```bash
 while [ $transferred -lt $size ]; do
 ```
 
-The loop continues as long as:
+This starts a `while` loop.
 
-```text
-transferred < size
+A `while` loop repeats as long as its condition remains true.
+
+---
+
+## `-lt`
+
+The operator:
+
+```bash
+-lt
 ```
 
-### `-lt`
+means:
 
-`-lt` means **numerically less than**.
+```text
+numerically less than
+```
 
-So:
+Therefore:
 
 ```bash
 [ $transferred -lt $size ]
@@ -776,13 +1314,28 @@ So:
 
 means:
 
-> Has the transferred amount not yet reached the full source-file size?
+> Is the estimated transferred amount smaller than the total source-file size?
 
-If yes, keep monitoring.
+Example:
+
+```text
+transferred = 3000
+size        = 10000
+```
+
+Since:
+
+```text
+3000 < 10000
+```
+
+the loop continues.
 
 ---
 
-# 13. Measure Current Used Space
+# 25. Measure Current Used Space
+
+Inside the loop:
 
 ```bash
 currentUsed=$(df $destination | \
@@ -791,31 +1344,43 @@ currentUsed=$(df $destination | \
               cut -d " " -f 3)
 ```
 
-This repeats the same `df` pipeline.
+This performs the same file-system measurement as before.
 
-The difference is:
+The difference is timing.
 
-- `startUsed` was measured before copying.
-- `currentUsed` is measured while copying.
+`startUsed` was collected **before** the copy began.
 
-Example:
+`currentUsed` is collected **while** the copy is running.
+
+Suppose:
 
 ```text
-startUsed   = 5000000
-currentUsed = 5004000
+startUsed = 5000000
 ```
 
-The destination file system is now using 4000 more 1K blocks.
+and later:
+
+```text
+currentUsed = 5020000
+```
+
+The file system is using:
+
+```text
+20000
+```
+
+more 1 KB blocks.
 
 ---
 
-# 14. Calculate the Transferred Amount
+# 26. Calculate the Transferred Amount
 
 ```bash
 let "transferred=currentUsed-startUsed"
 ```
 
-This calculates:
+This performs:
 
 ```text
 transferred = currentUsed - startUsed
@@ -824,55 +1389,68 @@ transferred = currentUsed - startUsed
 Example:
 
 ```text
-currentUsed = 5004000
+currentUsed = 5020000
 startUsed   = 5000000
 ```
 
-Then:
+Therefore:
 
 ```text
-transferred = 4000
+transferred = 20000
 ```
 
-The script treats this increase in used file-system space as the amount copied.
+The script interprets this increase as approximately:
+
+```text
+20000 KB
+```
+
+of copied data.
 
 ---
 
-# 15. Calculate the Percentage
+# 27. Calculate the Percentage
 
 ```bash
 let "percentage=transferred*100/size"
 ```
 
-The formula is:
+This applies:
 
 ```text
 percentage = transferred × 100 / size
 ```
 
-Example:
+For example:
 
 ```text
-size        = 10000
-transferred = 4000
+transferred = 20000
+size        = 100000
 ```
 
 Then:
 
 ```text
-percentage = 4000 × 100 / 10000
-           = 40
+percentage = 20000 × 100 / 100000
 ```
 
-So progress is:
+which produces:
 
 ```text
-40%
+20
 ```
+
+Therefore the copy is estimated to be:
+
+```text
+20%
+```
+
+complete.
 
 ---
 
-# 16. Display the Percentage
+# 28. Display Progress
 
 ```bash
 echo "Progress: $percentage%"
@@ -881,486 +1459,507 @@ echo "Progress: $percentage%"
 If:
 
 ```text
-percentage = 40
+percentage = 20
 ```
 
-the terminal displays:
-
-```text
-Progress: 40%
-```
-
-Possible output during a copy:
-
-```text
-Progress: 12%
-Progress: 27%
-Progress: 43%
-Progress: 68%
-Progress: 91%
-Progress: 100%
-```
-
----
-
-# 17. Wait One Second
-
-```bash
-sleep 1
-```
-
-`sleep` pauses the script.
-
-`sleep 1` means:
-
-> Wait approximately one second.
-
-Then the next loop iteration begins.
-
-The monitoring cycle is:
-
-```text
-Check current used space
-        ↓
-Calculate transferred amount
-        ↓
-Calculate percentage
-        ↓
-Display percentage
-        ↓
-sleep 1
-        ↓
-Repeat
-```
-
----
-
-# 18. End the Loop
-
-```bash
-done
-```
-
-`done` closes the `while` loop.
-
-The loop terminates when:
-
-```text
-transferred >= size
-```
-
----
-
-# 19. Complete Program Flow
-
-```text
-START
-  |
-  v
-Check $# == 2
-  |
-  +---- No ---> print usage ---> exit 1
-  |
- Yes
-  |
-  v
-Check $1 is a regular file
-  |
-  +---- No ---> print error ---> exit 1
-  |
- Yes
-  |
-  v
-Check $2 is a directory
-  |
-  +---- No ---> print error ---> exit 1
-  |
- Yes
-  |
-  v
-source=$1
-destination=$2
-  |
-  v
-Determine source-file size
-  |
-  v
-Convert bytes to 1K blocks
-  |
-  v
-Run df on destination
-  |
-  v
-Store initial Used value in startUsed
-  |
-  v
-cp source destination &
-  |
-  v
-Copy runs in background
-  |
-  v
-transferred=0
-percentage=0
-  |
-  v
-+----------------------------------+
-| transferred < size ?             |
-+----------------------------------+
-        |
-       Yes
-        |
-        v
-Run df on destination again
-        |
-        v
-Get current Used value
-        |
-        v
-transferred =
-currentUsed - startUsed
-        |
-        v
-percentage =
-transferred * 100 / size
-        |
-        v
-Print percentage
-        |
-        v
-sleep 1
-        |
-        +-----------> repeat
-        |
-       No
-        |
-        v
-       END
-```
-
----
-
-# 20. Important Variables
-
-| Variable | Meaning |
-|---|---|
-| `$0` | Script name |
-| `$1` | Source-file path |
-| `$2` | Destination-directory path |
-| `$#` | Number of command-line arguments |
-| `source` | Copy of `$1` |
-| `destination` | Copy of `$2` |
-| `size` | Source-file size converted to 1K blocks |
-| `startUsed` | Used destination file-system space before copying |
-| `currentUsed` | Used destination file-system space during copying |
-| `transferred` | Difference between `currentUsed` and `startUsed` |
-| `percentage` | Estimated completion percentage |
-
----
-
-# 21. Important Commands
-
-| Command | Purpose |
-|---|---|
-| `echo` | Print messages |
-| `exit` | Terminate the script |
-| `ls -l` | Get detailed file information |
-| `cut` | Extract fields |
-| `df` | Get file-system disk-space information |
-| `tail -n 1` | Keep only the last line |
-| `tr -s " "` | Squeeze repeated spaces |
-| `cp` | Copy the source file |
-| `let` | Perform integer arithmetic |
-| `sleep` | Pause between progress checks |
-
----
-
-# 22. Important Bash Syntax
-
-| Syntax | Meaning |
-|---|---|
-| `$#` | Number of arguments |
-| `$0` | Script name |
-| `$1`, `$2` | First and second arguments |
-| `-ne` | Numerically not equal |
-| `-lt` | Numerically less than |
-| `-f` | Test for a regular file |
-| `-d` | Test for a directory |
-| `!` | Logical NOT |
-| `$(...)` | Command substitution |
-| `|` | Pipe |
-| `&` | Run command in background |
-| `\` | Continue command on next line |
-| `if ... fi` | Conditional statement |
-| `while ... done` | Loop |
-
----
-
-# 23. Progress Formula
-
-The script uses:
-
-```text
-transferred = currentUsed - startUsed
-```
-
-and:
-
-```text
-percentage = transferred × 100 / size
-```
-
-Therefore:
-
-```text
-                  currentUsed - startUsed
-Progress (%) = ----------------------------- × 100
-                         size
-```
-
----
-
-# 24. Why `df` Is Important
-
-`df` reports disk-space information for the **file system containing a path**.
-
-It does not report the size of that particular file or directory.
-
-Conceptually:
-
-```text
-Physical disk / partition
-        |
-        v
-    File system
-        |
-        +---- /data
-               |
-               +---- backup
-```
-
-If `/data/backup` belongs to a file system that uses:
-
-```text
-5,000,000 KB
-```
-
-before the copy and:
-
-```text
-5,020,000 KB
-```
-
-during the copy, the script observes an increase of:
-
-```text
-20,000 KB
-```
-
-and treats that increase as transferred data.
-
----
-
-# 25. Why Field 3 Is Used
-
-After normalization, a `df` line can look like:
-
-```text
-/dev/sda7 41141492 5881472 33174616 16% /data
-```
-
-Fields:
-
-```text
-Field 1 → /dev/sda7
-Field 2 → 41141492     total 1K blocks
-Field 3 → 5881472      used space
-Field 4 → 33174616     available space
-Field 5 → 16%          percentage used
-Field 6 → /data        mount point
-```
-
-The script uses:
-
-```bash
-cut -d " " -f 3
-```
-
-because field 3 is the **Used** value.
-
----
-
-# 26. Why Background Execution Is Necessary
-
-Without `&`:
-
-```bash
-cp $source $destination
-```
-
-the program would behave like:
-
-```text
-Start copy
-   ↓
-Wait until copy finishes
-   ↓
-Start monitoring
-```
-
-This cannot show useful progress.
-
-With:
-
-```bash
-cp $source $destination &
-```
-
-the copy and monitoring overlap:
-
-```text
-            +--> cp continues copying
-            |
-script -----+
-            |
-            +--> script monitors disk usage
-```
-
----
-
-# 27. Example Execution
-
-Run:
-
-```bash
-./copy_progress.sh /data/source.iso /data/backup
-```
-
-Suppose:
-
-```text
-size = 100000 KB
-```
-
-and before copying:
-
-```text
-startUsed = 500000 KB
-```
-
-Later:
-
-```text
-currentUsed = 520000 KB
-```
-
-Then:
-
-```text
-transferred = 520000 - 500000
-            = 20000 KB
-```
-
-Progress:
-
-```text
-percentage = 20000 × 100 / 100000
-           = 20%
-```
-
-Output:
+the command prints:
 
 ```text
 Progress: 20%
 ```
 
-One second later, suppose:
+As the copy continues, the output could be:
 
 ```text
-currentUsed = 550000 KB
+Progress: 20%
+Progress: 38%
+Progress: 56%
+Progress: 73%
+Progress: 89%
+Progress: 100%
+```
+
+---
+
+# 29. Pause for One Second
+
+```bash
+sleep 1
+```
+
+`sleep` temporarily pauses execution.
+
+The argument:
+
+```text
+1
+```
+
+means one second.
+
+Therefore the script does not continuously run `df` as quickly as possible.
+
+Instead, the monitoring sequence becomes:
+
+```text
+Measure
+   ↓
+Calculate
+   ↓
+Print
+   ↓
+Wait 1 second
+   ↓
+Measure again
+```
+
+---
+
+# 30. End the Loop
+
+```bash
+done
+```
+
+`done` marks the end of the `while` loop.
+
+Bash loop syntax is:
+
+```bash
+while CONDITION
+do
+    commands
+done
+```
+
+This script uses the equivalent form:
+
+```bash
+while CONDITION; do
+    commands
+done
+```
+
+When:
+
+```text
+transferred >= size
+```
+
+the condition becomes false and the loop terminates.
+
+---
+
+# Important Variables
+
+| Variable      | Purpose                                           |
+| ------------- | ------------------------------------------------- |
+| `$0`          | Name of the script                                |
+| `$1`          | Source-file argument                              |
+| `$2`          | Destination-directory argument                    |
+| `$#`          | Number of arguments                               |
+| `source`      | Stores `$1`                                       |
+| `destination` | Stores `$2`                                       |
+| `size`        | Source-file size in approximately 1 KB units      |
+| `startUsed`   | Used destination file-system space before copying |
+| `currentUsed` | Used destination file-system space during copying |
+| `transferred` | Estimated amount transferred                      |
+| `percentage`  | Estimated progress percentage                     |
+
+---
+
+# Important Commands
+
+| Command | Purpose                            |
+| ------- | ---------------------------------- |
+| `echo`  | Print text                         |
+| `exit`  | Terminate the script               |
+| `ls`    | Obtain file information            |
+| `cut`   | Extract a field from text          |
+| `df`    | Display file-system disk usage     |
+| `tail`  | Select lines from the end of input |
+| `tr`    | Transform characters               |
+| `cp`    | Copy files                         |
+| `let`   | Perform integer arithmetic         |
+| `sleep` | Pause execution                    |
+
+---
+
+# Important Bash Syntax
+
+| Syntax           | Meaning                       |      |
+| ---------------- | ----------------------------- | ---- |
+| `$0`             | Script name                   |      |
+| `$1`             | First argument                |      |
+| `$2`             | Second argument               |      |
+| `$#`             | Number of arguments           |      |
+| `$variable`      | Read a variable               |      |
+| `$(command)`     | Command substitution          |      |
+| `                | `                             | Pipe |
+| `&`              | Background execution          |      |
+| `\`              | Continue command on next line |      |
+| `!`              | Logical NOT                   |      |
+| `-f`             | Test for regular file         |      |
+| `-d`             | Test for directory            |      |
+| `-ne`            | Numerically not equal         |      |
+| `-lt`            | Numerically less than         |      |
+| `if ... fi`      | Conditional statement         |      |
+| `while ... done` | Loop                          |      |
+
+---
+
+# Example Execution
+
+Suppose:
+
+```bash
+./copy_progress.sh large.iso /backup
+```
+
+and:
+
+```text
+large.iso size = 100000 KB
+```
+
+Before copying, the destination file system uses:
+
+```text
+startUsed = 500000 KB
+```
+
+The background copy starts:
+
+```bash
+cp large.iso /backup &
+```
+
+After one measurement:
+
+```text
+currentUsed = 515000 KB
 ```
 
 Then:
 
 ```text
-transferred = 50000 KB
-percentage  = 50%
+transferred = 515000 - 500000
+            = 15000 KB
+```
+
+Progress:
+
+```text
+percentage = 15000 × 100 / 100000
+           = 15%
 ```
 
 Output:
 
 ```text
-Progress: 50%
+Progress: 15%
 ```
 
-The program continues until the transferred amount reaches the source-file size.
+One second later:
 
----
+```text
+currentUsed = 540000 KB
+```
 
-# 28. Course-Slide Syntax Correction
+Now:
 
-The original course slide shows assignments in the form:
-
-```bash
-startUsed = $(...)
+```text
+transferred = 40000 KB
 ```
 
 and:
 
-```bash
-currentUsed = $(...)
+```text
+percentage = 40%
 ```
 
-In Bash, variable assignments must not contain spaces around `=`.
+Output:
 
-Therefore the executable version uses:
+```text
+Progress: 40%
+```
+
+The script continues checking until the copied amount reaches the expected source-file size.
+
+---
+
+# Understanding `df`
+
+A common source of confusion is the difference between:
+
+```text
+file size
+```
+
+and:
+
+```text
+file-system disk usage
+```
+
+Consider:
+
+```bash
+df /data/backup
+```
+
+This does **not** ask:
+
+> How large is `/data/backup`?
+
+It asks:
+
+> Which file system contains `/data/backup`, and how much space is used and available on that file system?
+
+Conceptually:
+
+```text
+SSD / Hard Disk
+      |
+      v
+File-system storage area
+      |
+      +---- directories
+      |        |
+      |        +---- /data
+      |               |
+      |               +---- /data/backup
+      |
+      +---- files
+```
+
+`df` reports information about the entire file-system storage area.
+
+The script takes advantage of this by measuring how much the `Used` value changes during the copy.
+
+---
+
+# Understanding the Pipeline
+
+The command:
+
+```bash
+df $destination | \
+tail -n 1 | \
+tr -s " " | \
+cut -d " " -f 3
+```
+
+can be understood step by step.
+
+Suppose:
+
+```bash
+df /data/backup
+```
+
+returns:
+
+```text
+Filesystem     1K-blocks    Used    Available Use% Mounted on
+/dev/sda7       41141492   5881472   33174616  16% /data
+```
+
+### Step 1
+
+```bash
+df $destination
+```
+
+produces:
+
+```text
+Filesystem     1K-blocks    Used    Available Use% Mounted on
+/dev/sda7       41141492   5881472   33174616  16% /data
+```
+
+### Step 2
+
+```bash
+tail -n 1
+```
+
+removes the header:
+
+```text
+/dev/sda7       41141492   5881472   33174616  16% /data
+```
+
+### Step 3
+
+```bash
+tr -s " "
+```
+
+changes repeated spaces into single spaces:
+
+```text
+/dev/sda7 41141492 5881472 33174616 16% /data
+```
+
+### Step 4
+
+```bash
+cut -d " " -f 3
+```
+
+extracts:
+
+```text
+5881472
+```
+
+This is the `Used` value.
+
+### Step 5
+
+Command substitution:
 
 ```bash
 startUsed=$(...)
 ```
 
-and:
+stores that value:
 
-```bash
-currentUsed=$(...)
+```text
+startUsed = 5881472
 ```
-
-This changes only the syntax error; the algorithm is the same.
 
 ---
 
-# 29. Summary
+# Why the Copy Runs in the Background
 
-The script has six main phases:
+Consider this version:
 
-```text
-1. Validate parameters
-2. Determine source-file size
-3. Record destination file-system used space
-4. Start cp in the background
-5. Measure used space every second
-6. Calculate and display progress
+```bash
+cp "$source" "$destination"
+echo "Check progress"
 ```
 
-The central commands are:
+The shell runs commands sequentially.
+
+Therefore:
+
+```text
+Start cp
+   |
+   v
+Wait
+   |
+   v
+cp finishes
+   |
+   v
+Run next command
+```
+
+The script cannot monitor the copy while waiting.
+
+Adding:
+
+```bash
+&
+```
+
+changes the behavior:
+
+```bash
+cp "$source" "$destination" &
+```
+
+Now:
+
+```text
+Start cp
+   |
+   +----------------------+
+   |                      |
+   v                      v
+cp keeps running      script continues
+in background         immediately
+```
+
+This makes the monitoring loop possible.
+
+---
+
+# Limitations of the Progress Calculation
+
+The script estimates progress based on **total file-system usage**, not directly on the number of bytes written by `cp`.
+
+That distinction is important.
+
+Suppose another program writes data to the same destination file system while the copy is running.
+
+Then:
+
+```text
+currentUsed - startUsed
+```
+
+would include:
+
+```text
+space consumed by cp
++
+space consumed by the other program
+```
+
+The script could therefore report a percentage that is higher than the actual copy progress.
+
+Similarly, file-system caching, allocation behavior, sparse files, compression, or other file-system features can affect the relationship between logical file size and occupied disk blocks.
+
+For a simple controlled environment in which the copy is the main operation changing the destination file-system usage, the calculation demonstrates the monitoring technique clearly.
+
+---
+
+# Summary
+
+The script combines several fundamental Bash concepts into one program.
+
+It first validates:
+
+```text
+number of arguments
+source file
+destination directory
+```
+
+Then it determines:
+
+```text
+source-file size
+destination file-system used space
+```
+
+It starts:
 
 ```bash
 cp $source $destination &
 ```
 
-which starts the copy in the background,
+so the copy runs in the background.
 
-```bash
-currentUsed=$(df $destination | tail -n 1 | tr -s " " | cut -d " " -f 3)
+While the copy runs, the script repeatedly performs:
+
+```text
+1. Measure current file-system usage
+2. Calculate transferred amount
+3. Calculate percentage
+4. Print percentage
+5. Wait one second
 ```
 
-which obtains the current used space of the destination file system,
+The core calculations are:
 
 ```bash
 let "transferred=currentUsed-startUsed"
 ```
-
-which estimates how much data has been copied,
 
 and:
 
@@ -1368,12 +1967,18 @@ and:
 let "percentage=transferred*100/size"
 ```
 
-which converts the transferred amount into a percentage.
+The complete idea is therefore:
 
-Finally:
-
-```bash
-sleep 1
+```text
+Background copy
+       +
+Destination file-system monitoring
+       +
+Arithmetic
+       +
+Periodic loop
+       =
+Estimated copy-progress display
 ```
 
-waits one second before the next progress check.
+This makes the program a useful example of how Bash scripts can coordinate background processes while simultaneously monitoring system information.
