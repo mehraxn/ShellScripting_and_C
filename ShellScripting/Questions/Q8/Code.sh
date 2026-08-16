@@ -2,8 +2,7 @@
 
 counter=0
 line=""
-flag=0
-dimension=0
+
 
 while read line
 do
